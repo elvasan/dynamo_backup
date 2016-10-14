@@ -1,0 +1,15 @@
+SET dynamodb.throughput.read.percent=READ_PERCENTAGE;
+SET hive.exec.dynamic.partition=true;
+SET hive.exec.dynamic.partition.mode=nonstrict;
+
+-- S3 target destination
+CREATE EXTERNAL TABLE IF NOT EXISTS `s3_TABLENAME` (item map<string,string>)
+PARTITIONED BY (created string)
+STORED AS ORC
+LOCATION 's3://S3_BUCKET/NO_MMYY/'
+TBLPROPERTIES ("orc.compress"="SNAPPY");
+
+INSERT INTO TABLE `s3_TABLENAME`
+PARTITION (created)
+SELECT *, TO_DATE(FROM_UNIXTIME(CAST(GET_JSON_OBJECT(item["created"], "$.n") AS INT))) created
+FROM `hive_TABLENAME`;
