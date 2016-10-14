@@ -55,6 +55,5 @@ Additionally, the table's read throughput will be raised and lowered immediately
 
 ## Todo
 
-* Support a test-mode where the read IOPS and scripts will be generated, but an EMR cluster will not be provisioned.
 * Support specifying the number of EMR nodes as a command line option.
 * Support unsharded tables.
