@@ -11,6 +11,7 @@ S3_BUCKET=jornaya-backup
 READ_PERCENTAGE="1.5"
 DYNAMODB_READ_UNIT_PRICE=0.00013
 MAX_READ_IOPS=40000
+SHARDED_TABLES=( "deviceid" "formdata" "lead_dom" "leads" "snapshots" "urls")
 
 # Set initial and default values for variables.
 date_suffix=""
@@ -228,8 +229,11 @@ if [ "$table" == "" ]; then
   exit 1
 fi
 
-date_suffix=`[ "$date_suffix" == "" ] && $date_command +%m%y || echo $date_suffix`
-[ ${#date_suffix} -gt 0 ] && table=$table"_"$date_suffix
+if [[ " ${SHARDED_TABLES[@]} " =~ " ${table} " ]]; then
+  echo "Table is sharded. Adding date suffix..."
+  date_suffix=`[ "$date_suffix" == "" ] && $date_command +%m%y || echo $date_suffix`
+  [ ${#date_suffix} -gt 0 ] && table=$table"_"$date_suffix
+fi
 
 # Special handling for the snapshots table.
 if [[ $table =~ ^snapshots ]]; then

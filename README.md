@@ -56,4 +56,3 @@ Additionally, the table's read throughput will be raised and lowered immediately
 ## Todo
 
 * Support specifying the number of EMR nodes as a command line option.
-* Support unsharded tables.
