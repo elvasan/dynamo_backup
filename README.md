@@ -7,7 +7,7 @@ raising read throughput to do, and then writing the data to S3.
 ## Usage
 
 ```
-./backup_dynamodb_table_to_s3 -t table_name [-d MMYY -c seconds]
+./backup_dynamodb_table_to_s3 -t table_name [-d MMYY -c seconds -e cluster-id -b price -i instance-type -a availability-zone -x] 
     -t: DynamoDB table name to backup
     -e: (optional) EMR Cluster ID to use for backup
     -d: (optional) Date suffix to use for monthly sharded tables. If not set, current month and year will be used.
