@@ -6,7 +6,7 @@
 
 # Set some constants.
 BACKUP_HQL="ddb_backup.hql"
-S3_WRITE_HQL="s3_write.hql"
+S3_WRITE_HQL="s3_write_no_partition.hql"
 S3_BUCKET=jornaya-backup
 READ_PERCENTAGE="1.5"
 DYNAMODB_READ_UNIT_PRICE=0.00013
@@ -20,6 +20,9 @@ table_no_mmyy=""
 time_to_complete=3600
 next_month=""
 this_month=""
+cluster_id=""
+step_ids=""
+override_iops=0
 availability_zone="us-east-1e"
 core_instance_type="d2.8xlarge"
 spot_bid_price=2
@@ -92,7 +95,8 @@ getCapacityPartitions() {
 }
 
 getCompleteTimeThroughput() {
-  completeTimeThroughput=$(echo $table_size/$time_to_complete/8192 | bc)
+
+  completeTimeThroughput=$(echo $table_size/3600/8192 | bc)
 
   if [ $completeTimeThroughput -eq 0 ]; then
     completeTimeThroughput=1
@@ -104,7 +108,9 @@ getMaximumReadThroughput() {
 }
 
 getNewReadIOPS() {
-  if [ $completeTimeThroughput -lt $maximumReadThroughput ]; then
+  if [ $override_iops -ne 0 ]; then
+    new_read_iops=$override_iops
+  elif [ $completeTimeThroughput -lt $maximumReadThroughput ]; then
     new_read_iops=$completeTimeThroughput
   else
     new_read_iops=$maximumReadThroughput
@@ -173,19 +179,39 @@ cleanupS3() {
   done
 }
 
+provisionCluster() {
+  if [ $new_read_iops -gt $read_capacity ]; then
+    cluster_id=$(aws emr create-cluster --auto-terminate --steps Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$new_read_iops"] Type=HIVE,Name='ddb-backup',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$read_capacity"] Type=HIVE,Name='s3-write',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] --applications Name=Hadoop Name=Hive Name=Pig Name=Hue --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-5632583e","EmrManagedMasterSecurityGroup":"sg-5432583c"}' --service-role EMR_DefaultRole --enable-debugging --release-label emr-4.7.1 --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' --name "$table backup" --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' --region us-east-1 | jq -r .ClusterId)
+  else
+    cluster_id=$(aws emr create-cluster --auto-terminate --steps Type=HIVE,Name='ddb-backup',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=HIVE,Name='s3-write',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] --applications Name=Hadoop Name=Hive Name=Pig Name=Hue --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-5632583e","EmrManagedMasterSecurityGroup":"sg-5432583c"}' --service-role EMR_DefaultRole --enable-debugging --release-label emr-4.7.1 --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' --name "$table backup" --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' --region us-east-1 | jq -r .ClusterId)
+  fi
+}
+
+addStepsToCluster() {
+  if [ $new_read_iops -gt $read_capacity ]; then
+    total_steps=4
+    step_ids=($(aws emr add-steps --cluster-id ${cluster_id} --steps Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$new_read_iops"] Type=HIVE,Name='ddb-backup',ActionOnFailure=CANCEL_AND_WAIT,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$read_capacity"] Type=HIVE,Name='s3-write',ActionOnFailure=CANCEL_AND_WAIT,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] | jq -r .StepIds[]))
+  else
+    total_steps=2
+    step_ids=($(aws emr add-steps --cluster-id ${cluster_id} --steps Type=HIVE,Name='ddb-backup',ActionOnFailure=CANCEL_AND_WAIT,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=HIVE,Name='s3-write',ActionOnFailure=CANCEL_AND_WAIT,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] | jq -r .StepIds[]))
+  fi
+}
+
 usage () {
   echo ""
   echo "./backup_dynamodb_table_to_s3 -t table_name [-d MMYY -c seconds]"
   echo "    -t: DynamoDB table name to backup"
+  echo "    -e: (optional) EMR Cluster ID to use for backup"
   echo "    -d: (optional) Date suffix to use for monthly sharded tables. If not set, current month and year will be used."
   echo "    -c: (optional) Time to complete, in seconds (default: 3600)"
   echo "    -b: (optional) Spot bid price, in dollars (default: \$2.00)"
   echo "    -i: (optional) EMR core instance type (default: d2.8xlarge)"
   echo "    -a: (optional) Availability Zone to be used for EMR cluster (default: us-east-1e)"
   echo "    -x: (optional) Enable debug mode. EMR cluster will not provisioned but throughput info will be printed."
+  echo "    -p: (optional) Read IOPS to use. Overrides calculations in the script."
 }
 
-while getopts "xt:d:c:b:i:a:x" opt; do
+while getopts "xt:e:d:c:b:i:a:xp:" opt; do
   case $opt in
     a)
       availability_zone=$OPTARG
@@ -199,8 +225,14 @@ while getopts "xt:d:c:b:i:a:x" opt; do
     d)
       date_suffix=$OPTARG
       ;;
+    e)
+      cluster_id=$OPTARG
+      ;;
     i)
       core_instance_type=$OPTARG
+      ;;
+    p)
+      override_iops=$OPTARG
       ;;
     t)
       table_no_mmyy=$OPTARG
@@ -230,7 +262,8 @@ if [ "$table" == "" ]; then
 fi
 
 if [[ " ${SHARDED_TABLES[@]} " =~ " ${table} " ]]; then
-  echo "Table is sharded. Adding date suffix..."
+  echo "Table is sharded. Adding date suffix and adding partitioned S3 write..."
+  S3_WRITE_HQL="s3_write.hql"
   date_suffix=`[ "$date_suffix" == "" ] && $date_command +%m%y || echo $date_suffix`
   [ ${#date_suffix} -gt 0 ] && table=$table"_"$date_suffix
 fi
@@ -246,7 +279,6 @@ if [[ $table =~ ^snapshots ]]; then
   next_month=$($date_command --date="$curr_year_month-15 +1 month" +%Y-%m-01)
 fi
 
-
 getTableInfo $table
 generateThroughputScript
 generateHiveBackupScript
@@ -258,26 +290,38 @@ uploadScriptsToS3
 # Provision EMR Cluster
 if [ $debug_mode != true ]; then
   echo ""
-  echo "Starting EMR Cluster..."
-  if [ $new_read_iops -gt $read_capacity ]; then
-    cluster_id=$(aws emr create-cluster --steps Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$new_read_iops"] Type=HIVE,Name='ddb-backup',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=CUSTOM_JAR,Name=CustomJAR,ActionOnFailure=CANCEL_AND_WAIT,Jar=s3://elasticmapreduce/libs/script-runner/script-runner.jar,Args=["s3://${S3_BUCKET}/change_throughput_$table.sh","$read_capacity"] Type=HIVE,Name='s3-write',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] --auto-terminate --applications Name=Hadoop Name=Hive Name=Pig Name=Hue --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-5632583e","EmrManagedMasterSecurityGroup":"sg-5432583c"}' --service-role EMR_DefaultRole --enable-debugging --release-label emr-4.7.1 --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' --name "$table backup" --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' --region us-east-1 | jq -r .ClusterId)
+  if [ "$cluster_id" == "" ]; then
+    echo "Starting EMR Cluster..."
+    provisionCluster
+    echo "Cluster ID: $cluster_id"
+
+    # Wait until EMR Cluster is Ready
+    seconds_to_wait=30
+    cluster_state="STARTING"
+    while [ $cluster_state != TERMINATING ]; do
+      cluster_state=`aws emr describe-cluster --cluster-id $cluster_id | jq -r .Cluster.Status.State`
+      echo $($date_command) Cluster $cluster_id state is $cluster_state
+      [ $cluster_state != TERMINATING ] && echo Wait $seconds_to_wait seconds...; sleep $seconds_to_wait
+    done
+
   else
-    cluster_id=$(aws emr create-cluster --steps Type=HIVE,Name='ddb-backup',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/$table-backup.hql] Type=HIVE,Name='s3-write',ActionOnFailure=CONTINUE,ActionOnFailure=TERMINATE_CLUSTER,Args=[-f,s3://${S3_BUCKET}/${table}-s3-write.hql] --auto-terminate --applications Name=Hadoop Name=Hive Name=Pig Name=Hue --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-5632583e","EmrManagedMasterSecurityGroup":"sg-5432583c"}' --service-role EMR_DefaultRole --enable-debugging --release-label emr-4.7.1 --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' --name "$table backup" --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' --region us-east-1 | jq -r .ClusterId)
+    echo "Adding steps to existing EMR cluster $cluster_id"
+    addStepsToCluster
+
+    seconds_to_wait=30
+    for step in "${step_ids[@]}"; do
+      echo "Waiting for Step $step to complete."
+      step_status=$(aws emr describe-step --cluster-id ${cluster_id} --step-id ${step} | jq -r .Step.Status.State)
+      while [ "$step_status" != "COMPLETED" ]; do
+        step_status=$(aws emr describe-step --cluster-id ${cluster_id} --step-id ${step} | jq -r .Step.Status.State)
+        echo "Wait $seconds_to_wait seconds for Step $step to complete..."; sleep $seconds_to_wait
+      done
+      echo "Step $step has completed."
+    done
   fi
-  echo "Cluster ID: $cluster_id"
 
-  # Wait until EMR Cluster is Ready
-  seconds_to_wait=30
-  cluster_state="STARTING"
-  while [ $cluster_state != TERMINATING ]
-  do
-    cluster_state=`aws emr describe-cluster --cluster-id $cluster_id | jq -r .Cluster.Status.State`
-    echo $($date_command) Cluster $cluster_id state is $cluster_state
-    [ $cluster_state != TERMINATING ] && echo Wait $seconds_to_wait seconds...; sleep $seconds_to_wait
-  done
+  cleanupS3
 fi
-
-cleanupS3
 
 # Restore provisioned DynamoDB IOPS
 [ $new_read_iops -gt $read_capacity ] && echo $($date_command) Restore IOPS on $table from $new_read_iops to $read_capacity \($`echo "$read_capacity * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
