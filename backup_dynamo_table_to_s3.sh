@@ -270,15 +270,16 @@ if [[ " ${SHARDED_TABLES[@]} " =~ " ${table} " ]]; then
   [ ${#date_suffix} -gt 0 ] && table=$table"_"$date_suffix
 fi
 
+# Set variables to be applied as selection criteria for date based range queries
+curr_year_month="20${date_suffix:2:2}-${date_suffix:0:2}"
+this_month=$($date_command --date="$curr_year_month-01" +%Y-%m-%d)
+next_month=$($date_command --date="$curr_year_month-15 +1 month" +%Y-%m-01)
+
 # Special handling for the snapshots table.
 if [[ $table =~ ^snapshots ]]; then
   echo "Using special DynamoDB backup and S3 write scripts for ${table}."
   BACKUP_HQL="snapshots_ddb_backup.hql"
   S3_WRITE_HQL="snapshots_s3_write.hql"
-
-  curr_year_month="20${date_suffix:2:2}-${date_suffix:0:2}"
-  this_month=$($date_command --date="$curr_year_month-01" +%Y-%m-%d)
-  next_month=$($date_command --date="$curr_year_month-15 +1 month" +%Y-%m-01)
 fi
 
 getTableInfo $table
