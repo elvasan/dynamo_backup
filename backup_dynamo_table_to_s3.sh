@@ -47,6 +47,8 @@ generateS3WriteScript() {
   | sed "s/NO_MMYY/${table_no_mmyy}/g" \
   | sed "s/S3_BUCKET/${S3_BUCKET}/g" \
   | sed "s/READ_PERCENTAGE/${READ_PERCENTAGE}/g" \
+  | sed "s/START_DATE/${this_month}/g" \
+  | sed "s/END_DATE/${next_month}/g" \
   > ${table}-s3-write.hql
 }
 
