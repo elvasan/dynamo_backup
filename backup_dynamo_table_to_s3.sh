@@ -11,7 +11,7 @@ S3_BUCKET=jornaya-backup
 READ_PERCENTAGE="1.5"
 DYNAMODB_READ_UNIT_PRICE=0.00013
 MAX_READ_IOPS=40000
-SHARDED_TABLES=( "deviceid" "formdata" "lead_dom" "leads" "snapshots" "urls")
+SHARDED_TABLES=( "deviceid" "formdata" "lead_dom" "leads" "snapshots" "urls" "_test_deviceid" "_test_formdata" "_test_lead_dom" "_test_leads" "_test_snapshots" "_test_urls" )
 
 # Set initial and default values for variables.
 date_suffix=""
