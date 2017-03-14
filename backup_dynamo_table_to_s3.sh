@@ -288,7 +288,11 @@ generateHiveBackupScript
 generateS3WriteScript
 uploadScriptsToS3
 
-[ $new_read_iops -gt $read_capacity ] && echo `date` Raise IOPS on $table from $read_capacity to $new_read_iops \($`echo "$new_read_iops * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
+if [ $new_read_iops -gt $read_capacity ]; then
+  echo `date` Raise IOPS on $table from $read_capacity to $new_read_iops \($`echo "$new_read_iops * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
+else
+  echo 'Read IOPS less than Read Capacity. IOPS will not be raised'
+fi
 
 # Provision EMR Cluster
 if [ $debug_mode != true ]; then
@@ -324,7 +328,13 @@ if [ $debug_mode != true ]; then
   fi
 
   cleanupS3
+else
+  echo 'Debug mode enabled. Not provisioning cluster.'
 fi
 
 # Restore provisioned DynamoDB IOPS
-[ $new_read_iops -gt $read_capacity ] && echo $($date_command) Restore IOPS on $table from $new_read_iops to $read_capacity \($`echo "$read_capacity * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
+if [ $new_read_iops -gt $read_capacity ]; then
+  echo $($date_command) Restore IOPS on $table from $new_read_iops to $read_capacity \($`echo "$read_capacity * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
+else
+  echo 'IOPS were not raised. Nothing to lower.'
+fi
