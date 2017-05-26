@@ -327,15 +327,32 @@ if [ $debug_mode != true ]; then
     provisionCluster
     echo "Cluster ID: $cluster_id"
 
-    # Wait until EMR Cluster is Ready
+    # Wait for EMR cluster
     seconds_to_wait=30
-    cluster_state="STARTING"
-    while [ $cluster_state != TERMINATING ]; do
-      cluster_state=`aws emr describe-cluster --cluster-id $cluster_id | jq -r .Cluster.Status.State`
-      echo $($date_command) Cluster $cluster_id state is $cluster_state
-      [ $cluster_state != TERMINATING ] && echo Wait $seconds_to_wait seconds...; sleep $seconds_to_wait
-    done
+    previous_state=''
 
+    while true; do
+      json=$(aws emr describe-cluster --cluster-id ${cluster_id})
+      current_state=$(echo ${json} | jq -r '.Cluster.Status.State')
+
+      if [[ ${current_state} != ${previous_state} ]]; then
+        msg=$(echo ${json} | jq -r '.Cluster.Status.StateChangeReason.Message')
+        echo "$($date_command) Cluster $cluster_id state is $current_state. $msg"
+        previous_state=${current_state}
+      fi
+
+      if [[ "TERMINATED" == ${current_state} ]]; then
+        echo "EMR JOB SUCCESS"
+      fi
+
+      if [[ "TERMINATED_WITH_ERRORS" == ${current_state} ]]; then
+        echo "EMR JOB FAILURE"
+        emr_failure=true
+      fi
+
+      echo "Wait $seconds_to_wait seconds..."
+      sleep ${seconds_to_wait}
+    done
   else
     echo "Adding steps to existing EMR cluster $cluster_id"
     addStepsToCluster
@@ -362,4 +379,10 @@ if [ $new_read_iops -gt $read_capacity ]; then
   echo $($date_command) Restore IOPS on $table from $new_read_iops to $read_capacity \($`echo "$read_capacity * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
 else
   echo 'IOPS were not raised. Nothing to lower.'
+fi
+
+# Exit 1 to fail jenkins job
+if [[ ${emr_failure} == "true" ]]; then
+  echo "$cluster_id terminated with errors. Investigation required"
+  exit 1
 fi
