@@ -343,11 +343,13 @@ if [ $debug_mode != true ]; then
 
       if [[ "TERMINATED" == ${current_state} ]]; then
         echo "EMR JOB SUCCESS"
+        break
       fi
 
       if [[ "TERMINATED_WITH_ERRORS" == ${current_state} ]]; then
         echo "EMR JOB FAILURE"
         emr_failure=true
+        break
       fi
 
       echo "Wait $seconds_to_wait seconds..."
@@ -381,7 +383,7 @@ else
   echo 'IOPS were not raised. Nothing to lower.'
 fi
 
-# Exit 1 to fail jenkins job
+# Exit 1 to fail jenkins job if emr failure
 if [[ ${emr_failure} == "true" ]]; then
   echo "$cluster_id terminated with errors. Investigation required"
   exit 1
