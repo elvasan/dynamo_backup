@@ -7,7 +7,6 @@
 # Set some constants.
 BACKUP_HQL="ddb_backup.hql"
 S3_WRITE_HQL="s3_write_no_partition.hql"
-S3_BUCKET=jornaya-backup
 READ_PERCENTAGE="1.5"
 DYNAMODB_READ_UNIT_PRICE=0.00013
 MAX_READ_IOPS=40000
