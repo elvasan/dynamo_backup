@@ -188,7 +188,7 @@ provisionCluster() {
                  --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-7b8a81ec","EmrManagedMasterSecurityGroup":"sg-faf8f36d"}' \
                  --service-role EMR_DefaultRole \
                  --enable-debugging \
-                 --release-label emr-4.7.1 \
+                 --release-label emr-5.11.0 \
                  --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' \
                  --name "$table backup" --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' \
                  --region us-east-1 | \
@@ -200,7 +200,7 @@ provisionCluster() {
                  --ec2-attributes '{"KeyName":"data","InstanceProfile":"EMR_EC2_DefaultRole","AvailabilityZone":"'${availability_zone}'","EmrManagedSlaveSecurityGroup":"sg-7b8a81ec","EmrManagedMasterSecurityGroup":"sg-faf8f36d"}' \
                  --service-role EMR_DefaultRole \
                  --enable-debugging \
-                 --release-label emr-4.7.1 \
+                 --release-label emr-5.11.0 \
                  --log-uri 's3n://aws-logs-298785453590-us-east-1/elasticmapreduce/' \
                  --name "$table backup" \
                  --instance-groups '[{"InstanceCount":1,"InstanceGroupType":"MASTER","InstanceType":"m3.xlarge","Name":"Master instance group - 1"},{"InstanceCount":4,"BidPrice":"'${spot_bid_price}'","InstanceGroupType":"CORE","InstanceType":"'${core_instance_type}'","Name":"Core instance group - 5"}]' \
