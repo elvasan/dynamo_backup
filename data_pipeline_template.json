@@ -1,0 +1,96 @@
+{
+  "objects": [
+    {
+      "failureAndRerunMode": "CASCADE",
+      "resourceRole": "DataPipelineDefaultResourceRole",
+      "pipelineLogUri": "#{myPipelineLogUri}",
+      "role": "DataPipelineDefaultRole",
+      "scheduleType": "ONDEMAND",
+      "name": "Default",
+      "id": "Default"
+    },
+    {
+      "output": {
+        "ref": "S3BackupLocation"
+      },
+      "input": {
+        "ref": "DDBSourceTable"
+      },
+      "maximumRetries": "2",
+      "name": "TableBackupActivity",
+      "step": "s3://jornaya-data/test/manny/custom_jar/emr-dynamodb-tools-4.6.0-SNAPSHOT.jar,org.apache.hadoop.dynamodb.tools.DynamoDBExport,-D mapreduce.output.fileoutputformat.compress=true,-D mapreduce.output.fileoutputformat.compress.codec=org.apache.hadoop.io.compress.GzipCodec,-D mapreduce.map.speculative=false,#{output.directoryPath},#{input.tableName},1.5",
+      "id": "TableBackupActivity",
+      "runsOn": {
+        "ref": "__DYNAMODB_TABLE_NAME__"
+      },
+      "type": "EmrActivity",
+      "resizeClusterBeforeRunning": "true"
+    },
+    {
+      "readThroughputPercent": "#{myDDBReadThroughputRatio}",
+      "name": "DDBSourceTable",
+      "id": "DDBSourceTable",
+      "type": "DynamoDBDataNode",
+      "tableName": "#{myDDBTableName}"
+    },
+    {
+      "directoryPath": "#{myOutputS3Loc}/#{format(@scheduledStartTime, 'YYYY-MM-dd-HH-mm-ss')}",
+      "name": "S3BackupLocation",
+      "id": "S3BackupLocation",
+      "type": "S3DataNode"
+    },
+    {
+      "name": "__DYNAMODB_TABLE_NAME__",
+      "coreInstanceBidPrice": "#{myEmrCoreInstanceBidPrice}",
+      "coreInstanceCount": "1",
+      "coreInstanceType": "m3.xlarge",
+      "releaseLabel": "emr-5.11.0",
+      "masterInstanceType": "m3.xlarge",
+      "id": "__DYNAMODB_TABLE_NAME__",
+      "region": "#{myDDBRegion}",
+      "type": "EmrCluster",
+      "emrLogUri": "s3://emr-script-logs/",
+      "terminateAfter": "6 Hours"
+    }
+  ],
+  "parameters": [
+    {
+      "description": "Output S3 folder",
+      "id": "myOutputS3Loc",
+      "type": "AWS::S3::ObjectKey"
+    },
+    {
+      "description": "Source DynamoDB table name",
+      "id": "myDDBTableName",
+      "type": "String"
+    },
+    {
+      "default": "0.25",
+      "watermark": "Enter value between 0.1-1.0",
+      "description": "DynamoDB read throughput ratio",
+      "id": "myDDBReadThroughputRatio",
+      "type": "Double"
+    },
+    {
+      "default": "us-east-1",
+      "watermark": "us-east-1",
+      "description": "Region of the DynamoDB table",
+      "id": "myDDBRegion",
+      "type": "String"
+    },
+    {
+      "default": "1",
+      "description": "Spot Price to use for core instances in EMR cluster",
+      "id": "myEmrCoreInstanceBidPrice",
+      "type": "String"
+    }
+  ],
+  "values": {
+    "myDDBRegion": "us-east-1",
+    "myDDBTableName": "__DYNAMODB_TABLE_NAME__",
+    "myDDBReadThroughputRatio": "1",
+    "myOutputS3Loc": "__S3_LOCATION__",
+    "myPipelineLogUri": "s3://pipelinedata/logs/",
+    "myEmrCoreInstanceBidPrice": "0.266"
+  }
+}
