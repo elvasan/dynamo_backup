@@ -18,7 +18,7 @@
       },
       "maximumRetries": "2",
       "name": "TableBackupActivity",
-      "step": "s3://jornaya-data/test/manny/custom_jar/emr-dynamodb-tools-4.6.0-SNAPSHOT.jar,org.apache.hadoop.dynamodb.tools.DynamoDBExport,-D mapreduce.output.fileoutputformat.compress=true,-D mapreduce.output.fileoutputformat.compress.codec=org.apache.hadoop.io.compress.GzipCodec,-D mapreduce.map.speculative=false,#{output.directoryPath},#{input.tableName},1.5",
+      "step": "s3://jornaya-data/test/manny/custom_jar/emr-dynamodb-tools-4.6.0-SNAPSHOT.jar,org.apache.hadoop.dynamodb.tools.DynamoDBExport,-D mapreduce.output.fileoutputformat.compress=true,-D mapreduce.output.fileoutputformat.compress.codec=org.apache.hadoop.io.compress.GzipCodec,-D mapreduce.map.speculative=false,-D mapreduce.map.memory.mb=5760,-D mapreduce.reduce.memory.mb=5760,-D yarn.app.mapreduce.am.resource.mb=5760,-D mapreduce.map.java.opts=-Xmx4608m,-D mapreduce.reduce.java.opts=-Xmx4608m,#{output.directoryPath},#{input.tableName},1.0",
       "id": "TableBackupActivity",
       "runsOn": {
         "ref": "__DYNAMODB_TABLE_NAME__"
