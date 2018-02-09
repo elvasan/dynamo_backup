@@ -32,6 +32,8 @@ def dynamodb_dictionary_to_python_dictionary(dynamo_dictionary):
             return_dictionary[key] = decimal.Decimal(value[dynamo_type])
         elif dynamo_type == 'b':
             return_dictionary[key] = base64.b64decode(value[dynamo_type])
+        elif dynamo_type == 'nS':
+            return_dictionary[key] = set(map(decimal.Decimal, value[dynamo_type]))
         else:
             return_dictionary[key] = value[dynamo_type]
 
