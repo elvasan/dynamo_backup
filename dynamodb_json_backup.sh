@@ -11,7 +11,7 @@ usage () {
   echo "./dynamodb_json_backup.sh -t table_name [-p iops -o csv_file -b bucket -g uid]"
   echo "    -t: Name of DynamoDB table to back up in JSON format to S3"
   echo "    -g: (optional) UID to which to Grant full ownership to backed up files"
-  echo "    -b: (optional) S3 URI to write backup data (e.g. s3://{bucket}/{path}). Overrides location used in script."
+  echo "    -b: (optional) S3 Bucket to write backup data. Data will be backed up to s3://<this-bucket>/<table-name>"
   echo "    -p: (optional) Read IOPS to use. Overrides calculations in the script."
   echo "    -o: (optional) Print results to CSV file."
   echo "    -h: print this help message"
@@ -25,7 +25,7 @@ db=ddb_backup_verify
 while getopts t:b:g:p:o:h opt; do
   case ${opt} in
     t) table_name=${OPTARG};;
-    b) s3_location=${OPTARG};;
+    b) s3_bucket=${OPTARG};;
     g) grant_canonical_uid=${OPTARG};;
     p) override_iops=$OPTARG;;
     o) csv_file=${OPTARG};;
@@ -51,16 +51,19 @@ if [ "$table_name" == "" ]; then
 fi
 
 if [[ -z ${s3_bucket+x} ]]; then
+  s3_bucket=jornaya-data
   if [[ ${table_name} =~ _[0-9]{4}$ ]]; then
     mmyy_suffix=`echo $table_name | awk -F _ '{print $(NF)}'`
     message_type=${table_name:0:${#table_name}-5}
     month=${mmyy_suffix:0:2}
     year=20${mmyy_suffix:2:2}
     partition="month=$year-$month-01"
-    s3_location=s3://jornaya-data/json/${message_type}/${partition}/ # Default S3 location (if not supplied)
+    s3_location=s3://${s3_bucket}/json/${message_type}/${partition}/ # Default S3 location (if not supplied)
   else
-    s3_location=s3://jornaya-data/json/${table_name}/ # Default S3 location (if not supplied)
+    s3_location=s3://${s3_bucket}/json/${table_name}/ # Default S3 location (if not supplied)
   fi
+else
+  s3_location=s3://${s3_bucket}/${table_name}/
 fi
 
 pipeline_name="DynamoDB JSON S3 Backup [${table_name}]" # Name for Data Pipeline
@@ -132,7 +135,7 @@ if [[ ${result} -ne 0 ]]; then
 fi
 
 # Get the path of the latest written backup
-new_key=$(get_latest_s3_key ${s3_location}/)
+new_key=$(get_latest_s3_key ${s3_location})
 
 # Grant access to the newly written key if we're handling cross account buckets
 if [[ ! -z ${grant_canonical_uid+x} ]]; then
