@@ -165,8 +165,15 @@ row_count=$(aws athena get-query-results --query-execution-id ${query_id} --quer
 rm ${table_name}-drop.ddl ${table_name}-create.ddl ${table_name}-count.ddl
 
 exit_status=0
-if [[ ${row_count} -ne ${item_count} ]]; then
-  echo `date` "DynamoDB item count does not equal S3 row count."
+
+# Allow tolerance in row count comparision since new data can come in for DynamoDB tables while we're running.
+# DynamoDB only updates the item count shown in the table metadata once every 6 hours.
+# If the S3 row count is >= the DynamoDB item count AND the S3 row count is less than double the DynamoDB item count,
+# let the backup pass.
+if [[ ${row_count} -ge ${item_count} && ${row_count} -lt $((item_count * 2)) ]]; then
+  echo `date` "S3 row count is within tolerance with DynamoDB item count. (Allowed: S3 >= DynamoDB, S3 < 2 * DynamoDB)"
+else
+  echo `date` "S3 row count is not within tolerance."
   echo "DynamoDB Item Count: ${item_count}"
   echo "S3 Row Count: ${row_count}"
   exit_status=1
