@@ -8,10 +8,12 @@ for function in `ls ./functions/*.sh`; do . ${function}; done
 # Prints script usage instructions
 usage () {
   echo ""
-  echo "./dynamodb_json_backup.sh -t table_name"
+  echo "./dynamodb_json_backup.sh -t table_name [-p iops -o csv_file -b bucket -g uid]"
   echo "    -t: Name of DynamoDB table to back up in JSON format to S3"
-  echo "    -b: (optional) S3 Path to logs bucket"
+  echo "    -g: (optional) UID to which to Grant full ownership to backed up files"
+  echo "    -b: (optional) S3 Bucket to write backup data. Data will be backed up to s3://<this-bucket>/<table-name>"
   echo "    -p: (optional) Read IOPS to use. Overrides calculations in the script."
+  echo "    -o: (optional) Print results to CSV file."
   echo "    -h: print this help message"
 }
 
@@ -20,24 +22,13 @@ MAX_READ_IOPS=40000
 DYNAMODB_READ_UNIT_PRICE=0.00013
 db=ddb_backup_verify
 
-while getopts t:b:p:h opt; do
+while getopts t:b:g:p:o:h opt; do
   case ${opt} in
-    t)
-    table_name=${OPTARG}
-    # Ensure backups are written to appropriate S3 partition for monthly sharded tables
-    if [[ $table_name =~ _[0-9]{4}$ ]]; then
-      mmyy_suffix=`echo $table_name | awk -F _ '{print $(NF)}'`
-      message_type=${table_name:0:${#table_name}-5}
-      month=${mmyy_suffix:0:2}
-      year=20${mmyy_suffix:2:2}
-      partition="month=$year-$month-01"
-      s3_location=s3://jornaya-data/json/${message_type}/${partition}/ # Default S3 location (if not supplied)
-    else
-      s3_location=s3://jornaya-data/json/${table_name}/ # Default S3 location (if not supplied)
-    fi
-    ;;
-    b) s3_location=${OPTARG};;
+    t) table_name=${OPTARG};;
+    b) s3_bucket=${OPTARG};;
+    g) grant_canonical_uid=${OPTARG};;
     p) override_iops=$OPTARG;;
+    o) csv_file=${OPTARG};;
     h)
       usage
       exit 0
@@ -59,6 +50,22 @@ if [ "$table_name" == "" ]; then
   exit 1
 fi
 
+if [[ -z ${s3_bucket+x} ]]; then
+  s3_bucket=jornaya-data
+  if [[ ${table_name} =~ _[0-9]{4}$ ]]; then
+    mmyy_suffix=`echo $table_name | awk -F _ '{print $(NF)}'`
+    message_type=${table_name:0:${#table_name}-5}
+    month=${mmyy_suffix:0:2}
+    year=20${mmyy_suffix:2:2}
+    partition="month=$year-$month-01"
+    s3_location=s3://${s3_bucket}/json/${message_type}/${partition}/ # Default S3 location (if not supplied)
+  else
+    s3_location=s3://${s3_bucket}/json/${table_name}/ # Default S3 location (if not supplied)
+  fi
+else
+  s3_location=s3://${s3_bucket}/${table_name}/
+fi
+
 pipeline_name="DynamoDB JSON S3 Backup [${table_name}]" # Name for Data Pipeline
 
 # Raise DynamoDB table Read Capacity Units (RCU's)
@@ -67,7 +74,7 @@ make_dynamodb_rcu_script
 if [ $new_read_iops -gt $read_capacity ]; then
   echo `date` Raise IOPS on $table from $read_capacity to $new_read_iops \($`echo "$new_read_iops * $DYNAMODB_READ_UNIT_PRICE" | bc` per hour\)
 else
-  echo 'Proposed new Read IOPS less than or equal to current Read Capacity. IOPS will not be raised'
+  echo 'Read IOPS less than Read Capacity. IOPS will not be raised'
 fi
 . ./$change_dynamodb_rcu_script_name $new_read_iops
 rm $change_dynamodb_rcu_script_name
@@ -103,8 +110,8 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
-# Wait until work by EMR cluster moving DynamoDB data to S3 orchestrated by Data Pipeline is done
-wait_for_pipeline
+# Wait until work by EMR cluster moving DynamoDB data to S3 started by Data Pipeline is done
+result=$(wait_for_pipeline)
 
 # Restore provisioned DynamoDB IOPS
 if [ $new_read_iops -gt $read_capacity ]; then
@@ -122,8 +129,29 @@ if [[ $? -ne 0 ]]; then
   exit 1
 fi
 
-# Remove the "manifest" file since we don't want this metadata commingling with our data (recommended by AWS in leadidaws account support case 4713814881)
-aws s3 rm $s3_location --recursive --exclude "*" --include "*manifest"
+if [[ ${result} -ne 0 ]]; then
+  echo `date` "Date Pipeline activity did not finish successfully. Exiting..."
+  exit 1
+fi
+
+# Get the path of the latest written backup
+new_key=$(get_latest_s3_key ${s3_location})
+
+# Grant access to the newly written key if we're handling cross account buckets
+if [[ ! -z ${grant_canonical_uid+x} ]]; then
+  for object in $(aws s3api list-objects --bucket ${s3_bucket} --prefix ${table_name}/${new_key} \
+                  --query Contents[].Key --output text); do
+    aws s3api put-object-acl --bucket ${s3_bucket} --key ${object} --grant-full-control "id=${grant_canonical_uid}"
+  done
+fi
+
+# Remove everything but the latest backup
+aws s3 rm ${s3_location} --recursive --include '*' --exclude "*${new_key}*"
+
+# Remove the "manifest" and "SUCCESS" file since we don't want this metadata commingling with
+# our data (recommended by AWS in leadidaws account support case 4713814881)
+aws s3 rm ${s3_location} --recursive --exclude '*' --include '*manifest*'
+aws s3 rm ${s3_location} --recursive --exclude '*' --include '*SUCCESS*'
 
 sed "s/__DYNAMODB_TABLE_NAME__/${table_name}/g" athena_verification_create.ddl | sed "s|__S3_LOCATION__|${s3_location}|g" > ${table_name}-create.ddl
 sed "s/__DYNAMODB_TABLE_NAME__/${table_name}/g" athena_verification_drop.ddl > ${table_name}-drop.ddl
@@ -132,16 +160,39 @@ sed "s/__DYNAMODB_TABLE_NAME__/${table_name}/g" athena_verification_count.ddl > 
 run_athena_query "$(< ${table_name}-drop.ddl)" ${db}
 run_athena_query "$(< ${table_name}-create.ddl)" ${db}
 run_athena_query "$(< ${table_name}-count.ddl)" ${db}
-s3_row_count=$(aws athena get-query-results --query-execution-id ${query_id} --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text)
-run_athena_query "$(< ${table_name}-drop.ddl)" ${db}
+row_count=$(aws athena get-query-results --query-execution-id ${query_id} --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text)
 
 rm ${table_name}-drop.ddl ${table_name}-create.ddl ${table_name}-count.ddl
 
-if [[ ${s3_row_count} -ne ${item_count} ]]; then
-  echo `date` "DynamoDB item count does not equal S3 row count."
-  echo "DynamoDB Item Count: ${item_count}"
-  echo "S3 Item Count: ${s3_row_count}"
-  exit 1
+exit_status=0
+
+# Allow tolerance in row count comparision since new data can come in for DynamoDB tables while we're running.
+# DynamoDB only updates the item count shown in the table metadata once every 6 hours.
+# If the S3 row count is >= the DynamoDB item count AND the S3 row count is less than double the DynamoDB item count,
+# let the backup pass.
+if [[ ${row_count} -ge ${item_count} && ${row_count} -lt $((item_count * 2)) ]]; then
+  echo `date` "S3 row count is within tolerance with DynamoDB item count. (Allowed: S3 >= DynamoDB, S3 < 2 * DynamoDB)"
 else
-  exit 0
+  echo `date` "S3 row count is not within tolerance."
+  echo "DynamoDB Item Count: ${item_count}"
+  echo "S3 Row Count: ${row_count}"
+  exit_status=1
 fi
+
+cd verification_scripts
+output=$(pipenv run python dynamodb_backup_test.py --table ${table_name})
+
+if [[ $? -ne 0 ]]; then
+  exit_status=1
+  echo `date` "Verification failed! ${output}"
+fi
+
+cd ..
+
+if [[ ! -z ${csv_file+x} ]]; then
+  printf '%s\n' ${table_name} "$(date)" ${item_count} ${row_count} ${exit_status} | gpaste -sd ',' >> ${csv_file}
+  aws s3 cp ${csv_file} s3://jornaya-data/${csv_file}
+fi
+
+echo ${date_command} "Exit status is ${exit_status}"
+exit ${exit_status}
